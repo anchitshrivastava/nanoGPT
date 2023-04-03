@@ -4,6 +4,8 @@ from torch.nn import functional as F
 
 from layers import SelfAttentionHead
 
+from utils import get_batch
+
 from config import N_EMBEDS, CONTEXT_SIZE, DEVICE, HEAD_SIZE, LR
 
 """
@@ -53,21 +55,21 @@ class BigramLanguageModel(nn.Module):
         return idx
 
     @torch.no_grad()
-    def estimate_loss(self, train_generator, test_generator, eval_iters):
+    def estimate_loss(self, eval_iters):
         out = {}
 
         self.eval()
 
         losses_train = torch.zeros(eval_iters)
         for index in range(eval_iters):
-            X_train, y_train = next(train_generator)
-            logits_train, loss_train = self(X_train, y_train)
+            X_train, y_train = get_batch("train")
+            logits_train, loss_train = self(idx=X_train, targets=y_train)
             losses_train[index] = loss_train.item()
         out['train'] = losses_train.mean()
 
         losses_test = torch.zeros(eval_iters)
         for index in range(eval_iters):
-            X_test, y_test = next(test_generator)
+            X_test, y_test = get_batch("test")
             logits_test, loss_test = self(X_test, y_test)
             losses_test[index] = loss_test.item()
         out['test'] = losses_test.mean()
@@ -76,20 +78,19 @@ class BigramLanguageModel(nn.Module):
 
         return out
 
-    def train_model(self, epochs, eval_epochs, train_generator, test_generator):
+    def train_model(self, epochs, eval_epochs):
 
         optimizer = torch.optim.AdamW(self.parameters(), lr=LR)
         # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', factor=1e-5, patience=1000)
 
         for epoch in range(epochs):
-            x, y = next(train_generator)
+            x, y = get_batch("train")
             logits, loss = self(x, y)
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             optimizer.step()
-            if epoch % 100 == 0:
-                losses = self.estimate_loss(train_generator=train_generator, test_generator=test_generator,
-                                            eval_iters=eval_epochs)
+            if epoch % 500 == 0:
+                losses = self.estimate_loss(eval_iters=eval_epochs)
                 # scheduler.step(losses['test'])
                 print(f"Train loss is {losses['train']}")
                 print(f"Validation loss is {losses['test']}")
