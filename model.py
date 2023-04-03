@@ -2,6 +2,10 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
+from layers import SelfAttentionHead
+
+from config import N_EMBEDS, CONTEXT_SIZE, DEVICE, HEAD_SIZE, LR
+
 """
 The layers required for this project are:
 1. Embedding layer 
@@ -17,10 +21,18 @@ class BigramLanguageModel(nn.Module):
 
     def __init__(self, vocab_size: int):
         super().__init__()
-        self.embedding_table = nn.Embedding(vocab_size, vocab_size)
+        self.embedding_table = nn.Embedding(vocab_size, N_EMBEDS)
+        self.positional_embedding_table = nn.Embedding(CONTEXT_SIZE, N_EMBEDS)
+        self.lm_head = nn.Linear(HEAD_SIZE, vocab_size)
+        self.attention_head = SelfAttentionHead()
 
     def forward(self, idx, targets=None):
-        logits = self.embedding_table(idx)  # B, T, C
+        B, T = idx.shape
+        pos_embeds = self.positional_embedding_table(torch.arange(T, device=DEVICE))  # T, C
+        embeds = self.embedding_table(idx)  # B, T, C
+        x = embeds + pos_embeds
+        x = self.attention_head(x)
+        logits = self.lm_head(x)  # B, T, vocab_size
         if targets is None:
             loss = None
         else:
@@ -32,7 +44,8 @@ class BigramLanguageModel(nn.Module):
 
     def generate(self, idx, max_new_tokens: int = 100):
         for _ in range(max_new_tokens):
-            logits, loss = self(idx)
+            idx_cond = idx[:, -CONTEXT_SIZE:]
+            logits, loss = self(idx_cond)
             logits = logits[:, -1, :]
             probs = F.softmax(logits, dim=1)
             idx_next = torch.multinomial(probs, num_samples=1)
@@ -45,19 +58,19 @@ class BigramLanguageModel(nn.Module):
 
         self.eval()
 
-        losses = torch.zeros(eval_iters)
+        losses_train = torch.zeros(eval_iters)
         for index in range(eval_iters):
-            X, y = next(train_generator)
-            logits, loss = self(X, y)
-            losses[index] = loss.item()
-        out['train'] = losses.mean()
+            X_train, y_train = next(train_generator)
+            logits_train, loss_train = self(X_train, y_train)
+            losses_train[index] = loss_train.item()
+        out['train'] = losses_train.mean()
 
-        losses = torch.zeros(eval_iters)
+        losses_test = torch.zeros(eval_iters)
         for index in range(eval_iters):
-            X, y = next(test_generator)
-            logits, loss = self(X, y)
-            losses[index] = loss.item()
-        out['test'] = losses.mean()
+            X_test, y_test = next(test_generator)
+            logits_test, loss_test = self(X_test, y_test)
+            losses_test[index] = loss_test.item()
+        out['test'] = losses_test.mean()
 
         self.train()
 
@@ -65,8 +78,8 @@ class BigramLanguageModel(nn.Module):
 
     def train_model(self, epochs, eval_epochs, train_generator, test_generator):
 
-        optimizer = torch.optim.AdamW(self.parameters(), lr=1e-3)
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', factor=1e-5, patience=1000)
+        optimizer = torch.optim.AdamW(self.parameters(), lr=LR)
+        # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', factor=1e-5, patience=1000)
 
         for epoch in range(epochs):
             x, y = next(train_generator)

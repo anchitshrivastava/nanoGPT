@@ -1,10 +1,6 @@
-import numpy as np
 import torch
 
-CONTEXT_SIZE = 32
-BATCH_SIZE = 64
-
-DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
+from config import CONTEXT_SIZE, BATCH_SIZE, DEVICE
 
 
 def return_vocab(data: str = None) -> list:

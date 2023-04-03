@@ -5,7 +5,7 @@ from model import BigramLanguageModel
 
 from utils import return_vocab, encode_data, decode_data, data_generator
 
-DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
+from config import DEVICE
 
 if __name__ == '__main__':
     # reading the dataset
@@ -24,10 +24,9 @@ if __name__ == '__main__':
 
     total_len = len(data)
     train_split = 0.90
-    test_split = 0.10
 
     train = data[:int(train_split * total_len)]
-    test = data[-1 * int(test_split * total_len) - 1:]
+    test = data[int(train_split * total_len):]
 
     print(f"""Len of Train = {len(train)} \n Len of Test = {len(test)}""")
 
