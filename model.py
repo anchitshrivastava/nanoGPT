@@ -2,11 +2,11 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
-from layers import SelfAttentionHead
+from layers import Block
 
 from utils import get_batch
 
-from config import N_EMBEDS, CONTEXT_SIZE, DEVICE, HEAD_SIZE, LR
+from config import N_EMBEDS, CONTEXT_SIZE, DEVICE, LR, NUM_LAYERS
 
 """
 The layers required for this project are:
@@ -25,15 +25,17 @@ class BigramLanguageModel(nn.Module):
         super().__init__()
         self.embedding_table = nn.Embedding(vocab_size, N_EMBEDS)
         self.positional_embedding_table = nn.Embedding(CONTEXT_SIZE, N_EMBEDS)
-        self.lm_head = nn.Linear(HEAD_SIZE, vocab_size)
-        self.attention_head = SelfAttentionHead()
+        self.lm_head = nn.Linear(N_EMBEDS, vocab_size)
+        self.blocks = nn.Sequential(*[Block() for _ in range(NUM_LAYERS)])
+        self.layer_normalization = nn.LayerNorm(N_EMBEDS)
 
     def forward(self, idx, targets=None):
         B, T = idx.shape
         pos_embeds = self.positional_embedding_table(torch.arange(T, device=DEVICE))  # T, C
         embeds = self.embedding_table(idx)  # B, T, C
         x = embeds + pos_embeds
-        x = self.attention_head(x)
+        x = self.blocks(x)
+        x = self.layer_normalization(x)
         logits = self.lm_head(x)  # B, T, vocab_size
         if targets is None:
             loss = None
