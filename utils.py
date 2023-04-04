@@ -2,25 +2,23 @@ import numpy as np
 
 import torch
 
+import tiktoken
+
 from config import CONTEXT_SIZE, BATCH_SIZE, DEVICE
 
+enc = tiktoken.get_encoding("gpt2")
 
-def return_vocab() -> list:
-    vocab = list(set(data))
-    vocab.sort()
-    return vocab
+
+def return_vocab() -> int:
+    return enc.n_vocab
 
 
 def encode_data(data: str = None) -> list:
-    vocab = return_vocab()
-    encodings = {ch: i for i, ch in enumerate(vocab)}
-    return [encodings[i] for i in data]
+    return enc.encode(data)
 
 
 def decode_data(data: list = None, vocab: list = None) -> str:
-    vocab = return_vocab()
-    decodings = {i: ch for i, ch in enumerate(vocab)}
-    return "".join([decodings[i] for i in data])
+    return enc.decode(data)
 
 
 def encode_train_test():
