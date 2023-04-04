@@ -1,35 +1,18 @@
-# Copyright 2023 Databricks, Inc.
-
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-
-#     http://www.apache.org/licenses/LICENSE-2.0
-
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-import logging
 from functools import partial
-from typing import Any, Dict, List, Tuple, Union
-
-import click
 import numpy as np
-from datasets import Dataset, load_dataset
+import torch
+from datasets import Dataset, from_generator
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
     DataCollatorForLanguageModeling,
-    PreTrainedTokenizer,
     Trainer,
     TrainingArguments,
     set_seed,
 )
 
-logger = logging.getLogger(__name__)
+from config import model_config
+from utils import get_train_batch
 
 DEFAULT_TRAINING_DATASET = "tatsu-lab/alpaca"
 DEFAULT_INPUT_MODEL = "EleutherAI/gpt-j-6B"
@@ -37,9 +20,20 @@ RESPONSE_KEY = "### Response:\n"
 DEFAULT_SEED = 42
 MAX_LENGTH = 1024
 
+tokenizer = AutoTokenizer.from_pretrained(DEFAULT_INPUT_MODEL)
+tokenizer.pad_token = tokenizer.eos_token
 
+model =  AutoModelForCausalLM.from_pretrained(
+    "EleutherAI/gpt-j-6B",
+    revision="float16",
+    torch_dtype=torch.float16,
+    low_cpu_mem_usage=True,
+    cache_dir = "/home/sarabjot/storage/backup2/pathfactory_models"
+)
+    
 class DataCollatorForCompletionOnlyLM(DataCollatorForLanguageModeling):
-    def torch_call(self, examples: List[Union[List[int], Any, Dict[str, Any]]]) -> Dict[str, Any]:
+    def torch_call(self, examples):
+        
         batch = super().torch_call(examples)
 
         response_token_ids = self.tokenizer.encode(RESPONSE_KEY)
@@ -67,7 +61,7 @@ class DataCollatorForCompletionOnlyLM(DataCollatorForLanguageModeling):
         return batch
 
 
-def preprocess_batch(batch: Dict[str, List], tokenizer: AutoTokenizer, max_length: int = MAX_LENGTH) -> dict:
+def preprocess_batch(batch, tokenizer, max_length=MAX_LENGTH):
     return tokenizer(
         batch["text"],
         max_length=max_length,
@@ -75,10 +69,8 @@ def preprocess_batch(batch: Dict[str, List], tokenizer: AutoTokenizer, max_lengt
     )
 
 
-def load_training_dataset(training_data_id: str = DEFAULT_TRAINING_DATASET, split: str = "train") -> Dataset:
-    logger.info(f"Loading {training_data_id} dataset")
-    dataset: Dataset = load_dataset(training_data_id)[split]
-    logger.info("Found %d rows", dataset.num_rows)
+def load_training_dataset(training_data_id= DEFAULT_TRAINING_DATASET):
+    dataset = from_generator(get_train_batch)
 
     # Remove empty responses
     dataset = dataset.filter(lambda rec: not rec["text"].strip().endswith("### Response:"))
@@ -90,31 +82,6 @@ def load_training_dataset(training_data_id: str = DEFAULT_TRAINING_DATASET, spli
     dataset = dataset.map(_func)
 
     return dataset
-
-
-def load_tokenizer(pretrained_model_name_or_path: str = DEFAULT_INPUT_MODEL) -> PreTrainedTokenizer:
-    logger.info(f"Loading tokenizer for {pretrained_model_name_or_path}")
-    tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path)
-    tokenizer.pad_token = tokenizer.eos_token
-    return tokenizer
-
-
-def load_model(
-    pretrained_model_name_or_path: str = DEFAULT_INPUT_MODEL, *, gradient_checkpointing: bool = False
-) -> AutoModelForCausalLM:
-    logger.info(f"Loading model for {pretrained_model_name_or_path}")
-    model = AutoModelForCausalLM.from_pretrained(
-        pretrained_model_name_or_path, trust_remote_code=True, use_cache=False if gradient_checkpointing else True,
-    cache_dir = "/home/sarabjot/storage/backup2/pathfactory_models")
-    return model
-
-
-def get_model_tokenizer(
-    pretrained_model_name_or_path: str = DEFAULT_INPUT_MODEL, *, gradient_checkpointing: bool = False
-) -> Tuple[AutoModelForCausalLM, PreTrainedTokenizer]:
-    tokenizer = load_tokenizer(pretrained_model_name_or_path)
-    model = load_model(pretrained_model_name_or_path, gradient_checkpointing=gradient_checkpointing)
-    return model, tokenizer
 
 
 def preprocess_dataset(tokenizer: AutoTokenizer, max_length: int = MAX_LENGTH, seed=DEFAULT_SEED) -> Dataset:
@@ -129,78 +96,38 @@ def preprocess_dataset(tokenizer: AutoTokenizer, max_length: int = MAX_LENGTH, s
     """
 
     dataset = load_training_dataset()
-
-    logger.info("Preprocessing dataset")
+    
     _preprocessing_function = partial(preprocess_batch, max_length=max_length, tokenizer=tokenizer)
     dataset = dataset.map(
         _preprocessing_function,
         batched=True,
         remove_columns=["instruction", "input", "output", "text"],
     )
-
-    logger.info("Shuffling dataset")
     dataset = dataset.shuffle(seed=seed)
-
-    logger.info("Done preprocessing")
 
     return dataset
 
 
 def train(
-    local_output_dir,
-    dbfs_output_dir,
-    epochs,
-    per_device_train_batch_size,
-    per_device_eval_batch_size,
-    lr,
-    seed,
-    deepspeed,
-    gradient_checkpointing,
-    local_rank,
-    bf16,
     test_size=1000,
 ):
-    set_seed(seed)
+    set_seed(DEFAULT_SEED)
 
-    model, tokenizer = get_model_tokenizer(gradient_checkpointing=gradient_checkpointing)
+    processed_dataset = preprocess_dataset(tokenizer=tokenizer, seed=DEFAULT_SEED)
 
-    processed_dataset = preprocess_dataset(tokenizer=tokenizer, seed=seed)
-
-    split_dataset = processed_dataset.train_test_split(test_size=test_size, seed=seed)
+    split_dataset = processed_dataset.train_test_split(test_size=test_size, seed=DEFAULT_SEED)
 
     data_collator = DataCollatorForCompletionOnlyLM(
         tokenizer=tokenizer, mlm=False, return_tensors="pt", pad_to_multiple_of=8
     )
 
-    if not dbfs_output_dir:
-        logger.warn("Will NOT save to DBFS")
-
     training_args = TrainingArguments(
-        output_dir=local_output_dir,
-        per_device_train_batch_size=per_device_train_batch_size,
-        per_device_eval_batch_size=per_device_eval_batch_size,
-        fp16=False,
-        bf16=bf16,
-        learning_rate=lr,
-        num_train_epochs=epochs,
-        deepspeed=deepspeed,
-        gradient_checkpointing=gradient_checkpointing,
-        logging_dir=f"{local_output_dir}/runs",
-        logging_strategy="steps",
-        logging_steps=10,
-        evaluation_strategy="steps",
+        learning_rate=1e-5,
+        num_train_epochs=3,
+        deepspeed=model_config,
         eval_steps=10,
-        save_strategy="steps",
-        save_steps=200,
-        save_total_limit=1,
-        load_best_model_at_end=True,
-        report_to="tensorboard",
-        disable_tqdm=True,
-        remove_unused_columns=False,
-        local_rank=local_rank,
+        remove_unused_columns=False
     )
-
-    logger.info("Instantiating Trainer")
 
     trainer = Trainer(
         model=model,
@@ -211,53 +138,10 @@ def train(
         data_collator=data_collator,
     )
 
-    logger.info("Training")
     trainer.train()
 
-    logger.info(f"Saving Model to {local_output_dir}")
-    trainer.save_model(output_dir=local_output_dir)
 
-    if dbfs_output_dir:
-        logger.info(f"Saving Model to {dbfs_output_dir}")
-        trainer.save_model(output_dir=dbfs_output_dir)
-
-    logger.info("Done.")
-
-
-@click.command()
-@click.option(
-    "--local-output-dir", type=str, help="Write directly to this local path", required=True
-)
-@click.option("--dbfs-output-dir", type=str, help="Sync data to this path on DBFS")
-@click.option("--epochs", type=int, default=3, help="Number of epochs to train for.")
-@click.option("--per-device-train-batch-size", type=int, default=8, help="Batch size to use for training.")
-@click.option("--per-device-eval-batch-size", type=int, default=8, help="Batch size to use for evaluation.")
-@click.option("--lr", type=float, default=1e-5, help="Learning rate to use for training.")
-@click.option("--seed", type=int, default=DEFAULT_SEED, help="Seed to use for training.")
-@click.option("--deepspeed", type=str, default=None, help="Path to deepspeed config file.")
-@click.option(
-    "--gradient-checkpointing/--no-gradient-checkpointing",
-    is_flag=True,
-    default=True,
-    help="Use gradient checkpointing?",
-)
-@click.option(
-    "--local_rank",
-    type=str,
-    default=True,
-    help="Provided by deepspeed to identify which instance this process is when performing multi-GPU training.",
-)
-@click.option("--bf16", type=bool, default=True, help="Whether to use bf16 (preferred on A100's).")
-def main(**kwargs):
-    train(**kwargs)
 
 
 if __name__ == "__main__":
-    logging.basicConfig(
-        format="%(asctime)s %(levelname)s [%(name)s] %(message)s", level=logging.INFO, datefmt="%Y-%m-%d %H:%M:%S"
-    )
-    try:
-        main()
-    except Exception:
-        logger.exception("main failed")
-        raise
+    train()
