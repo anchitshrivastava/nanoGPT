@@ -1,9 +1,10 @@
 import torch
 
-LR = 1e-3
-DEVICE = 'cuda:1' if torch.cuda.is_available() else 'cpu'
-CONTEXT_SIZE = 10
-BATCH_SIZE=32
+LR = 1e-5
+EPOCH = 3
+# DEVICE = 'cuda:1' if torch.cuda.is_available() else 'cpu'
+DEVICE = 'cpu'
+BATCH_SIZE=1
 
 END_KEY = "### End"
 INSTRUCTION_KEY = "### Instruction:"
