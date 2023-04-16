@@ -7,10 +7,9 @@ from datasets import load_dataset
 import torch
 import torch.nn.functional as F
 
-from config import LR, DEVICE, END_KEY, RESPONSE_KEY_NL, INSTRUCTION_KEY, BATCH_SIZE, EPOCH
+from config import LR, DEVICE, END_KEY, RESPONSE_KEY_NL, INSTRUCTION_KEY, BATCH_SIZE, EPOCH, START_TOKEN
 
-import transformers
-from transformers import AutoTokenizer, AutoModelForCausalLM, TrainingArguments, Trainer
+from transformers import AutoTokenizer, AutoModelForCausalLM
 
 
 model = AutoModelForCausalLM.from_pretrained(
@@ -20,10 +19,13 @@ model = AutoModelForCausalLM.from_pretrained(
 )
 
 tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-neo-2.7B")
-tokenizer.pad_token = tokenizer.eos_token
-# tokenizer.add_special_tokens({"additional_special_tokens": [END_KEY, INSTRUCTION_KEY, RESPONSE_KEY_NL]})
+tokenizer.bos_token = START_TOKEN
+tokenizer.pad_token = '<|pad|>'
+tokenizer.add_special_tokens({"additional_special_tokens": [END_KEY, INSTRUCTION_KEY, RESPONSE_KEY_NL]})
 
 model.to(DEVICE)
+
+model.resize_token_embeddings(len(tokenizer))
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=LR)
 
@@ -33,9 +35,7 @@ response_key_stripped = RESPONSE_KEY_NL.strip()
 dataset = dataset.filter(lambda rec: not rec["text"].strip().endswith(response_key_stripped))
 
 def _func(rec):
-    rec["text"] += f"\n\n{END_KEY}"
-    rec['label'] = RESPONSE_KEY_NL + rec['text'].split(RESPONSE_KEY_NL)[1]
-    rec['text'] = rec['text'].split(RESPONSE_KEY_NL)[0]
+    rec["text"] = START_TOKEN + rec["text"] + f"\n\n{END_KEY}"
     return rec
 
 dataset = dataset.map(_func)
@@ -59,23 +59,38 @@ dataset = dataset.map(
 
 def _fun_tokenize_labels(rec):
     tokenized_ = tokenizer(
-        rec["label"],
-        max_length=128,
-        truncation=True,
-        padding='max_length',
-        return_tensors='pt'
-    )
-    rec['label'] = tokenized_['input_ids']
+        RESPONSE_KEY_NL
+    )['input_ids'][0]
+    # seggregate input_ids and label
+    input_ids = []
+    attention_mask = []
+    label = []
+    for i in range(len(rec['input_ids'])):
+        if rec['input_ids'][i] != tokenized_:
+            input_ids.append(rec['input_ids'][i])
+            attention_mask.append(rec['attention_mask'][i])
+        else:
+            label += rec['input_ids'][i:]
+            break
+    rec = {}
+    rec['input_ids'] = torch.tensor(input_ids, dtype=int)
+    rec['attention_mask'] = torch.tensor(attention_mask, dtype=int)
+    rec['label'] = torch.tensor(label, dtype=int)
+    
     return rec
     
 dataset = dataset.map(_fun_tokenize_labels)
 
 dataset_split = dataset.train_test_split(test_size=1000)
 
-optimizer = torch.optim.SGD(model.parameters(), lr=LR)
+optimizer = torch.optim.Adam(model.parameters(), lr=LR)
+
+def get_random_batch(dataset, batch_size=BATCH_SIZE):
+    random_indexes = torch.randint(0, len(dataset), batch_size)
+    return dataset[random_indexes]
 
 count = 0
-step_at = 1000
+step_at = 10
 with torch.cuda.amp.autocast():
     for ep in range(EPOCH):
         for row in tqdm(dataset_split['train']):
