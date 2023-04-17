@@ -1,4 +1,5 @@
 from tqdm import tqdm
+from copy import deepcopy
 
 from functools import partial
 
@@ -36,9 +37,6 @@ response_key_stripped = RESPONSE_KEY_NL.strip()
 dataset = dataset.filter(lambda rec: not rec["text"].strip().endswith(response_key_stripped))
 
 def _func(rec):
-    rec["text"] += f"\n\n{END_KEY}"
-    rec['label'] = RESPONSE_KEY_NL + rec['text'].split(RESPONSE_KEY_NL)[1]
-    rec['text'] = rec['text'].split(RESPONSE_KEY_NL)[0]
     rec["text"] = START_TOKEN + rec["text"] + f"\n\n{END_KEY}"
     return rec
 
@@ -63,20 +61,36 @@ dataset = dataset.map(
 
 def _fun_tokenize_labels(rec):
     tokenized_ = tokenizer(
-        rec["label"],
-        max_length=128,
-        truncation=True,
-        padding='max_length',
-        return_tensors='pt'
-    )
-    rec['label'] = tokenized_['input_ids'][0]
+        RESPONSE_KEY_NL
+    )['input_ids'][0]
+    
+    labels = deepcopy(rec['input_ids'])
+    
+    for i in range(len(labels)):
+        if labels[i]!=tokenized_:
+            labels[i] = -100
+        else:
+            break
+    
+    tokenized_ = tokenizer(
+        END_KEY
+    )['input_ids'][0]
+
+    for i in range(len(labels)-1, 0, -1):
+        if labels[i]==tokenized_:
+            labels[i] = -100
+        else:
+            break
+    
+    rec['labels'] = labels
+    
     return rec
     
 dataset = dataset.map(_fun_tokenize_labels)
 
 dataset_split = dataset.train_test_split(test_size=1000)
 
-optimizer = torch.optim.Adam(model.parameters(), lr=LR)
+optimizer = torch.optim.AdamW(model.parameters(), lr=LR)
 
 def get_random_batch(dataset, batch_size=BATCH_SIZE):
     random_indexes = torch.randint(0, len(dataset), (batch_size, ))
@@ -97,7 +111,7 @@ with torch.cuda.amp.autocast():
             out = out.logits
             b, t, c = out.shape
             out = out.view(b*t, c)
-            y_ = torch.tensor(row['label']).flatten()
+            y_ = torch.tensor(row['labels']).flatten()
             loss = F.cross_entropy(out, y_)
             print(loss)
             loss.backward()
@@ -108,5 +122,6 @@ with torch.cuda.amp.autocast():
             if count % step_at == 0 or loss < 0.8:
                 print("*"*100)
                 print(tokenizer.decode(torch.argmax(out, dim=1)))
-            
+
+torch.save(model, "/home/sarabjot/PathFactory/GPT-j/saved_hf_model/saved_model")
 print("yolo")

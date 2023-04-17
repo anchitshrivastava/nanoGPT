@@ -1,3 +1,6 @@
+from tqdm import tqdm
+from copy import deepcopy
+
 from functools import partial
 
 from datasets import load_dataset
@@ -8,7 +11,7 @@ import torch.nn.functional as F
 from config import LR, DEVICE, END_KEY, RESPONSE_KEY_NL, INSTRUCTION_KEY, BATCH_SIZE, EPOCH, START_TOKEN, INPUT_KEY
 
 import transformers
-from transformers import AutoTokenizer, AutoModelForCausalLM, Trainer, TrainingArguments
+from transformers import AutoTokenizer, AutoModelForCausalLM, TrainingArguments, Trainer
 
 
 model = AutoModelForCausalLM.from_pretrained(
@@ -35,9 +38,6 @@ response_key_stripped = RESPONSE_KEY_NL.strip()
 dataset = dataset.filter(lambda rec: not rec["text"].strip().endswith(response_key_stripped))
 
 def _func(rec):
-    rec["text"] += f"\n\n{END_KEY}"
-    rec['label'] = RESPONSE_KEY_NL + rec['text'].split(RESPONSE_KEY_NL)[1]
-    rec['text'] = rec['text'].split(RESPONSE_KEY_NL)[0]
     rec["text"] = START_TOKEN + rec["text"] + f"\n\n{END_KEY}"
     return rec
 
@@ -62,13 +62,29 @@ dataset = dataset.map(
 
 def _fun_tokenize_labels(rec):
     tokenized_ = tokenizer(
-        rec["label"],
-        max_length=128,
-        truncation=True,
-        padding='max_length',
-        return_tensors='pt'
-    )
-    rec['label'] = tokenized_['input_ids'][0]
+        RESPONSE_KEY_NL
+    )['input_ids'][0]
+    
+    labels = deepcopy(rec['input_ids'])
+    
+    for i in range(len(labels)):
+        if labels[i]!=tokenized_:
+            labels[i] = -100
+        else:
+            break
+    
+    tokenized_ = tokenizer(
+        END_KEY
+    )['input_ids'][0]
+
+    for i in range(len(labels)-1, 0, -1):
+        if labels[i]==tokenized_:
+            labels[i] = -100
+        else:
+            break
+    
+    rec['labels'] = labels
+    
     return rec
     
 dataset = dataset.map(_fun_tokenize_labels)
