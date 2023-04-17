@@ -3,11 +3,12 @@ from functools import partial
 from datasets import load_dataset
 
 import torch
+import torch.nn.functional as F
 
-from config import LR, DEVICE, END_KEY, RESPONSE_KEY_NL, INSTRUCTION_KEY, BATCH_SIZE, EPOCH
+from config import LR, DEVICE, END_KEY, RESPONSE_KEY_NL, INSTRUCTION_KEY, BATCH_SIZE, EPOCH, START_TOKEN, INPUT_KEY
 
 import transformers
-from transformers import AutoTokenizer, AutoModelForCausalLM, TrainingArguments, Trainer, 
+from transformers import AutoTokenizer, AutoModelForCausalLM, Trainer, TrainingArguments
 
 
 model = AutoModelForCausalLM.from_pretrained(
@@ -17,10 +18,14 @@ model = AutoModelForCausalLM.from_pretrained(
 )
 
 tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-neo-2.7B")
-tokenizer.pad_token = tokenizer.eos_token
-# tokenizer.add_special_tokens({"additional_special_tokens": [END_KEY, INSTRUCTION_KEY, RESPONSE_KEY_NL]})
+tokenizer.bos_token = START_TOKEN
+tokenizer.pad_token = END_KEY
+tokenizer.eos_token = END_KEY
+tokenizer.add_special_tokens({"additional_special_tokens": [END_KEY, INSTRUCTION_KEY, RESPONSE_KEY_NL, INPUT_KEY]})
 
 model.to(DEVICE)
+
+model.resize_token_embeddings(len(tokenizer))
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=LR)
 
@@ -31,8 +36,9 @@ dataset = dataset.filter(lambda rec: not rec["text"].strip().endswith(response_k
 
 def _func(rec):
     rec["text"] += f"\n\n{END_KEY}"
-    rec['label'] = rec['text'].split(RESPONSE_KEY_NL)[1]
-    rec['text'] = rec['text'].split(RESPONSE_KEY_NL)[0] + RESPONSE_KEY_NL
+    rec['label'] = RESPONSE_KEY_NL + rec['text'].split(RESPONSE_KEY_NL)[1]
+    rec['text'] = rec['text'].split(RESPONSE_KEY_NL)[0]
+    rec["text"] = START_TOKEN + rec["text"] + f"\n\n{END_KEY}"
     return rec
 
 dataset = dataset.map(_func)
@@ -43,7 +49,8 @@ def preprocess_batch(batch, tokenizer, max_length: int) -> dict:
         batch["text"],
         max_length=max_length,
         truncation=True,
-        padding='max_length'
+        padding='max_length',
+        return_tensors='pt'
     )
 
 _preprocessing_function = partial(preprocess_batch, max_length=128, tokenizer=tokenizer)
@@ -58,14 +65,22 @@ def _fun_tokenize_labels(rec):
         rec["label"],
         max_length=128,
         truncation=True,
-        padding='max_length'
+        padding='max_length',
+        return_tensors='pt'
     )
-    rec['label'] = tokenized_['input_ids']
+    rec['label'] = tokenized_['input_ids'][0]
     return rec
     
 dataset = dataset.map(_fun_tokenize_labels)
 
 dataset_split = dataset.train_test_split(test_size=1000)
+
+optimizer = torch.optim.Adam(model.parameters(), lr=LR)
+
+def get_random_batch(dataset, batch_size=BATCH_SIZE):
+    random_indexes = torch.randint(0, len(dataset), (batch_size, ))
+    return dataset[random_indexes]
+
 
 training_args = TrainingArguments(
         output_dir="./saved_hf_model",
