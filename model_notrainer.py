@@ -104,8 +104,8 @@ with torch.cuda.amp.autocast():
             row = get_random_batch(dataset_split['train'], batch_size=BATCH_SIZE)
             optimizer.zero_grad()
             batch_in = {
-                "input_ids": torch.tensor(row['input_ids']),
-                "attention_mask": torch.tensor(row['attention_mask'])
+                "input_ids": torch.tensor(row['input_ids']).to(DEVICE),
+                "attention_mask": torch.tensor(row['attention_mask']).to(DEVICE)
             }
             out = model.forward(**batch_in,)
             out = out.logits
@@ -120,6 +120,7 @@ with torch.cuda.amp.autocast():
             count += 1
             
             if count % step_at == 0 or loss < 0.8:
+                torch.save(model, "/home/sarabjot/PathFactory/GPT-j/saved_hf_model/saved_model")
                 print("*"*100)
                 print(tokenizer.decode(torch.argmax(out, dim=1)))
 
