@@ -11,3 +11,11 @@ INSTRUCTION_KEY = "### Instruction:"
 RESPONSE_KEY_NL = f"### Response:\n"
 INPUT_KEY = "### Input:"
 START_TOKEN = "<|startoftext|>"
+
+PROMPT_FORMAT = """Below is an instruction that describes a task. Write a response that appropriately completes the request.
+
+### Instruction:
+{instruction}
+
+### Response:
+"""
