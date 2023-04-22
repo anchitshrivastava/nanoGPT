@@ -111,16 +111,8 @@ with torch.cuda.amp.autocast():
     for ep in range(EPOCH):
         for row in tqdm(train_dataloader):
             optimizer.zero_grad()
-            batch_in = {
-                "input_ids": torch.tensor(row['input_ids']).to(DEVICE),
-                "attention_mask": torch.tensor(row['attention_mask']).to(DEVICE)
-            }
-            out = model.forward(**batch_in,)
-            out = out.logits
-            b, t, c = out.shape
-            out = out.view(b*t, c)
-            y_ = torch.tensor(row['labels']).flatten()
-            loss = F.cross_entropy(out, y_)
+            outputs = model(input_ids=row['input_ids'], attention_mask=row['attention_mask'], labels=row['labels'])
+            loss = outputs.loss
             print(loss)
             loss.backward()
             optimizer.step()
@@ -130,7 +122,8 @@ with torch.cuda.amp.autocast():
             if count % step_at == 0 or loss < 0.8:
                 torch.save(model.state_dict(), "/home/sarabjot/PathFactory/GPT-j/saved_hf_model/saved_model.pth")
                 print("*"*100)
-                print(tokenizer.decode(torch.argmax(out, dim=1)))
+                out = outputs.logits
+                print(tokenizer.decode(torch.argmax(out[0], dim=1)))
 
 torch.save(model.state_dict(), "/home/sarabjot/PathFactory/GPT-j/saved_hf_model/saved_model.pth")
 print("yolo")
