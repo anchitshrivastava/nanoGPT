@@ -1,16 +1,20 @@
+import os
 from tqdm import tqdm
 from copy import deepcopy
 
 from functools import partial
 
+import numpy as np
+
 from datasets import load_dataset
 
 import torch
 import torch.nn.functional as F
+from torch.utils.data import DataLoader
 
 from config import LR, DEVICE, END_KEY, RESPONSE_KEY_NL, INSTRUCTION_KEY, BATCH_SIZE, EPOCH, START_TOKEN, INPUT_KEY
 
-from transformers import AutoTokenizer, AutoModelForCausalLM
+from transformers import AutoTokenizer, AutoModelForCausalLM, DataCollatorForLanguageModeling
 
 
 model = AutoModelForCausalLM.from_pretrained(
@@ -18,6 +22,7 @@ model = AutoModelForCausalLM.from_pretrained(
     low_cpu_mem_usage=True,
     cache_dir = "/home/sarabjot/storage/backup2/pathfactory_models"
 )
+
 
 tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-neo-2.7B")
 tokenizer.bos_token = START_TOKEN
@@ -29,7 +34,8 @@ model.to(DEVICE)
 
 model.resize_token_embeddings(len(tokenizer))
 
-optimizer = torch.optim.AdamW(model.parameters(), lr=LR)
+if os.path.exists("/home/sarabjot/PathFactory/GPT-j/saved_hf_model/saved_model.pth"):
+    model.load_state_dict(torch.load("/home/sarabjot/PathFactory/GPT-j/saved_hf_model/saved_model.pth"))
 
 dataset = load_dataset("tatsu-lab/alpaca")['train']
 
@@ -48,60 +54,62 @@ def preprocess_batch(batch, tokenizer, max_length: int) -> dict:
         batch["text"],
         max_length=max_length,
         truncation=True,
-        padding='max_length',
-        return_tensors='pt'
     )
 
-_preprocessing_function = partial(preprocess_batch, max_length=128, tokenizer=tokenizer)
+_preprocessing_function = partial(preprocess_batch, max_length=1024, tokenizer=tokenizer)
+
 dataset = dataset.map(
     _preprocessing_function,
     batched=True,
     remove_columns=["instruction", "input", "output", "text"],
 )
 
-def _fun_tokenize_labels(rec):
-    tokenized_ = tokenizer(
-        RESPONSE_KEY_NL
-    )['input_ids'][0]
-    
-    labels = deepcopy(rec['input_ids'])
-    
-    for i in range(len(labels)):
-        if labels[i]!=tokenized_:
-            labels[i] = -100
-        else:
-            break
-    
-    tokenized_ = tokenizer(
-        END_KEY
-    )['input_ids'][0]
-
-    for i in range(len(labels)-1, 0, -1):
-        if labels[i]==tokenized_:
-            labels[i] = -100
-        else:
-            break
-    
-    rec['labels'] = labels
-    
-    return rec
-    
-dataset = dataset.map(_fun_tokenize_labels)
-
 dataset_split = dataset.train_test_split(test_size=1000)
+
+class DataCollatorForCompletionOnlyLM(DataCollatorForLanguageModeling):
+    def torch_call(self, examples):
+        batch = super().torch_call(examples)
+
+        # The prompt ends with the response key plus a newline.  We encode this and then try to find it in the
+        # sequence of tokens.  This should just be a single token.
+        response_token_ids = self.tokenizer.encode(RESPONSE_KEY_NL)
+
+        labels = batch["labels"].clone()
+
+        for i in range(len(examples)):
+
+            response_token_ids_start_idx = None
+            for idx in np.where(batch["labels"][i] == response_token_ids[0])[0]:
+                response_token_ids_start_idx = idx
+                break
+
+            if response_token_ids_start_idx is None:
+                raise RuntimeError(
+                    f'Could not find response key {response_token_ids} in token IDs {batch["labels"][i]}'
+                )
+
+            response_token_ids_end_idx = response_token_ids_start_idx + 1
+
+            # Make pytorch loss function ignore all tokens up through the end of the response key
+            labels[i, :response_token_ids_end_idx] = -100
+
+        batch["labels"] = labels
+
+        return batch
+
+data_collator = DataCollatorForCompletionOnlyLM(
+        tokenizer=tokenizer, mlm=False, return_tensors="pt", pad_to_multiple_of=8
+    )
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=LR)
 
-def get_random_batch(dataset, batch_size=BATCH_SIZE):
-    random_indexes = torch.randint(0, len(dataset), (batch_size, ))
-    return dataset[random_indexes]
+train_dataloader = DataLoader(dataset_split['train'], batch_size=BATCH_SIZE, collate_fn=data_collator)
 
 count = 0
 step_at = 10
 with torch.cuda.amp.autocast():
     for ep in range(EPOCH):
-        for _ in tqdm(range(len(dataset_split['train'])//BATCH_SIZE)):
-            row = get_random_batch(dataset_split['train'], batch_size=BATCH_SIZE)
+        for row in tqdm(train_dataloader):
             optimizer.zero_grad()
             batch_in = {
                 "input_ids": torch.tensor(row['input_ids']).to(DEVICE),
@@ -120,9 +128,9 @@ with torch.cuda.amp.autocast():
             count += 1
             
             if count % step_at == 0 or loss < 0.8:
-                torch.save(model, "/home/sarabjot/PathFactory/GPT-j/saved_hf_model/saved_model")
+                torch.save(model.state_dict(), "/home/sarabjot/PathFactory/GPT-j/saved_hf_model/saved_model.pth")
                 print("*"*100)
                 print(tokenizer.decode(torch.argmax(out, dim=1)))
 
-torch.save(model, "/home/sarabjot/PathFactory/GPT-j/saved_hf_model/saved_model")
+torch.save(model.state_dict(), "/home/sarabjot/PathFactory/GPT-j/saved_hf_model/saved_model.pth")
 print("yolo")
