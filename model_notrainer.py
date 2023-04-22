@@ -1,6 +1,5 @@
 import os
 from tqdm import tqdm
-from copy import deepcopy
 
 from functools import partial
 
@@ -9,18 +8,21 @@ import numpy as np
 from datasets import load_dataset
 
 import torch
-import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 from config import LR, DEVICE, END_KEY, RESPONSE_KEY_NL, INSTRUCTION_KEY, BATCH_SIZE, EPOCH, START_TOKEN, INPUT_KEY
 
-from transformers import AutoTokenizer, AutoModelForCausalLM, DataCollatorForLanguageModeling
+from transformers import AutoTokenizer, AutoModelForCausalLM, DataCollatorForLanguageModeling, AutoConfig
 
+
+config = AutoConfig.from_pretrained("EleutherAI/gpt-neo-2.7B")
+config.max_position_embeddings = 2048
 
 model = AutoModelForCausalLM.from_pretrained(
     "EleutherAI/gpt-neo-2.7B",
     low_cpu_mem_usage=True,
-    cache_dir = "/home/sarabjot/storage/backup2/pathfactory_models"
+    cache_dir = "/home/sarabjot/storage/backup2/pathfactory_models",
+    config = config
 )
 
 
