@@ -38,7 +38,7 @@ model.resize_token_embeddings(len(tokenizer))
 
 def generate_response(instruction: str, *, model, tokenizer, 
                       do_sample: bool = True, max_new_tokens: int = 256, top_p: float = 0.92, top_k: int = 0, **kwargs) -> str:
-    input_ids = tokenizer(PROMPT_FORMAT.format(instruction=instruction), return_tensors="pt").input_ids.to("cuda")
+    input_ids = tokenizer(PROMPT_FORMAT.format(instruction=instruction), return_tensors="pt").input_ids.to(DEVICE)
 
     # each of these is encoded to a single token
     response_key_token_id = tokenizer.encode("### Response:")[0]
@@ -132,7 +132,7 @@ data_collator = DataCollatorForCompletionOnlyLM(
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=LR)
 
-train_dataloader = DataLoader(dataset_split['train'], batch_size=BATCH_SIZE, collate_fn=data_collator)
+train_dataloader = DataLoader(dataset_split['train'], batch_size=BATCH_SIZE, collate_fn=data_collator, shuffle=True)
 
 count = 0
 step_at = 10
@@ -156,7 +156,10 @@ with torch.cuda.amp.autocast():
                 
             if count % 500 == 0:
                 print(")*&)(&)"*25)
-                print(generate_response("Write a tweet announcing Dolly, a large language model from Databricks.", model=model, tokenizer=tokenizer))
+                try:
+                    print(generate_response("Write a tweet announcing Dolly, a large language model from Databricks.", model=model, tokenizer=tokenizer))
+                except IndexError:
+                    pass
 
 torch.save(model.state_dict(), "/home/sarabjot/PathFactory/GPT-j/saved_hf_model/saved_model.pth")
 print("yolo")
