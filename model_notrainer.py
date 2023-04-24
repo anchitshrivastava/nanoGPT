@@ -1,6 +1,8 @@
 import os
 from tqdm import tqdm
 
+from copy import deepcopy
+
 from functools import partial
 
 import numpy as np
@@ -8,11 +10,14 @@ import numpy as np
 from datasets import load_dataset
 
 import torch
-from torch.utils.data import DataLoader
+import torch.nn.functional as F
 
-from config import LR, DEVICE, END_KEY, RESPONSE_KEY_NL, INSTRUCTION_KEY, BATCH_SIZE, EPOCH, START_TOKEN, INPUT_KEY, PROMPT_FORMAT
+from torch.utils.data import IterableDataset, DataLoader
 
-from transformers import AutoTokenizer, AutoModelForCausalLM, DataCollatorForLanguageModeling, AutoConfig
+from config import LR, DEVICE, END_KEY, RESPONSE_KEY_NL, INSTRUCTION_KEY, BATCH_SIZE, \
+    EPOCH, START_TOKEN, INPUT_KEY, PROMPT_FORMAT, MAX_TOKENIZE_LEN
+
+from transformers import AutoTokenizer, AutoModelForCausalLM, AutoConfig
 
 
 config = AutoConfig.from_pretrained("EleutherAI/gpt-neo-2.7B")
@@ -82,10 +87,12 @@ def preprocess_batch(batch, tokenizer, max_length: int) -> dict:
     return tokenizer(
         batch["text"],
         max_length=max_length,
+        padding='max_length',
         truncation=True,
+        return_tensors='pt'
     )
 
-_preprocessing_function = partial(preprocess_batch, max_length=1024, tokenizer=tokenizer)
+_preprocessing_function = partial(preprocess_batch, max_length=MAX_TOKENIZE_LEN, tokenizer=tokenizer)
 
 dataset = dataset.map(
     _preprocessing_function,
@@ -93,55 +100,75 @@ dataset = dataset.map(
     remove_columns=["instruction", "input", "output", "text"],
 )
 
-dataset_split = dataset.train_test_split(test_size=1000)
+def _fun_tokenize_labels(rec):
+    tokenized_ = tokenizer(
+        RESPONSE_KEY_NL
+    )['input_ids'][0]
+    
+    labels = deepcopy(rec['input_ids'])
+    
+    for i in range(len(labels)):
+        if labels[i]!=tokenized_:
+            labels[i] = -100
+        else:
+            labels[i] = -100
+            break
+    
+    tokenized_ = tokenizer(
+        END_KEY
+    )['input_ids'][0]
 
-class DataCollatorForCompletionOnlyLM(DataCollatorForLanguageModeling):
-    def torch_call(self, examples):
-        batch = super().torch_call(examples)
-
-        # The prompt ends with the response key plus a newline.  We encode this and then try to find it in the
-        # sequence of tokens.  This should just be a single token.
-        response_token_ids = self.tokenizer.encode(RESPONSE_KEY_NL)
-
-        labels = batch["labels"].clone()
-
-        for i in range(len(examples)):
-
-            response_token_ids_start_idx = None
-            for idx in np.where(batch["labels"][i] == response_token_ids[0])[0]:
-                response_token_ids_start_idx = idx
-                break
-
-            if response_token_ids_start_idx is None:
-                raise RuntimeError(
-                    f'Could not find response key {response_token_ids} in token IDs {batch["labels"][i]}'
-                )
-
-            response_token_ids_end_idx = response_token_ids_start_idx + 1
-
-            # Make pytorch loss function ignore all tokens up through the end of the response key
-            labels[i, :response_token_ids_end_idx] = -100
-
-        batch["labels"] = labels
-
-        return batch
-
-data_collator = DataCollatorForCompletionOnlyLM(
-        tokenizer=tokenizer, mlm=False, return_tensors="pt", pad_to_multiple_of=8
-    )
+    for i in range(len(labels)-1, 0, -1):
+        if labels[i]==tokenized_:
+            labels[i] = -100
+        else:
+            break
+    
+    rec['labels'] = labels
+    
+    return rec
+    
+dataset = dataset.map(_fun_tokenize_labels)
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=LR)
 
-train_dataloader = DataLoader(dataset_split['train'], batch_size=BATCH_SIZE, collate_fn=data_collator, shuffle=True)
+def get_random_batch(dataset, batch_size):
+    while True:
+        random_indexes = torch.randint(0, len(dataset), (batch_size, ))
+        yield dataset[random_indexes]
 
+class IterDataset(IterableDataset):
+    def __init__(self, dataset, generator, batch_size):
+        self.generator = generator
+        self.dataset = dataset
+        self.batch_size = batch_size
+
+    def __iter__(self):
+        return self.generator(self.dataset, self.batch_size)
+    
+    def __len__(self):
+        return len(self.dataset)//self.batch_size
+    
+dataset = IterDataset(dataset, get_random_batch, BATCH_SIZE)
+dataloader = DataLoader(dataset, num_workers=4, pin_memory=True)
+    
+#### write the summary stats
 count = 0
 step_at = 10
 with torch.cuda.amp.autocast():
     for ep in range(EPOCH):
-        for row in tqdm(train_dataloader):
+        for row in tqdm(dataloader):
             optimizer.zero_grad()
-            outputs = model(input_ids=row['input_ids'], attention_mask=row['attention_mask'], labels=row['labels'])
-            loss = outputs.loss
+            batch_in = {
+                "input_ids": torch.tensor(row['input_ids']).to(DEVICE),
+                "attention_mask": torch.tensor(row['attention_mask']).to(DEVICE)
+            }
+            out_ = model.forward(**batch_in,)
+            out_ = out_.logits
+            b, t, c = out_.shape
+            out_ = out_.view(b*t, c)
+            y_ = torch.tensor(row['labels']).flatten()
+            loss = F.cross_entropy(out_, y_)
             print(loss)
             loss.backward()
             optimizer.step()
@@ -150,16 +177,8 @@ with torch.cuda.amp.autocast():
             
             if count % step_at == 0 or loss < 0.8:
                 torch.save(model.state_dict(), "/home/sarabjot/PathFactory/GPT-j/saved_hf_model/saved_model.pth")
-                print("*"*100)
-                out = outputs.logits
-                print(tokenizer.decode(torch.argmax(out[0], dim=1)))
-                
-            if count % 500 == 0:
-                print(")*&)(&)"*25)
-                try:
-                    print(generate_response("Write a tweet announcing Dolly, a large language model from Databricks.", model=model, tokenizer=tokenizer))
-                except IndexError:
-                    pass
+                print("*"*100, flush=True)
+                print(tokenizer.decode(torch.argmax(out_, dim=1)))
 
 torch.save(model.state_dict(), "/home/sarabjot/PathFactory/GPT-j/saved_hf_model/saved_model.pth")
 print("yolo")
