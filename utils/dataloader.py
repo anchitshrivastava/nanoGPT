@@ -10,7 +10,7 @@ from utils.model import return_tokenizer
 
 from utils.data_helpers import adding_starting_ending_token, tokenize_batch, creating_masking_labels_inputs
 
-def return_alpaca_dataset():
+def return_alpaca_dataset_batch():
     dataset = load_dataset("tatsu-lab/alpaca", split='train', streaming=True)
     
     dataset = dataset.shuffle(buffer_size=BATCH_SIZE, seed=42)
@@ -41,7 +41,7 @@ def preprocess_dataset(dataset):
 
 
 def return_data_loader():
-    dataset = return_alpaca_dataset()
+    dataset = return_alpaca_dataset_batch()
     dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, num_workers=2, 
                             collate_fn=lambda x: preprocess_dataset(x))
     return dataloader
