@@ -1,5 +1,9 @@
 import torch
 
+from transformers import AutoConfig
+
+
+MODEL_NAME = "EleutherAI/gpt-neo-2.7B"
 LR = 3e-4
 EPOCH = 300
 # DEVICE = 'cuda:1' if torch.cuda.is_available() else 'cpu'
@@ -20,3 +24,6 @@ PROMPT_FORMAT = """Below is an instruction that describes a task. Write a respon
 
 ### Response:
 """
+
+model_config = AutoConfig.from_pretrained(MODEL_NAME)
+model_config.max_position_embeddings = 2048
