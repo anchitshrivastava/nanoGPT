@@ -160,3 +160,6 @@ cython_debug/
 .idea/
 
 *.txt
+
+.history/
+saved_hf_model/
