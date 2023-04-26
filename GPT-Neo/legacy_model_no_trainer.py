@@ -18,6 +18,8 @@ from config import LR, DEVICE, END_KEY, RESPONSE_KEY_NL, INSTRUCTION_KEY, BATCH_
 from transformers import AutoTokenizer, AutoModelForCausalLM, AutoConfig
 
 
+torch.set_num_threads(40)
+
 config = AutoConfig.from_pretrained("EleutherAI/gpt-neo-2.7B")
 config.max_position_embeddings = 2048
 
@@ -109,19 +111,21 @@ def _fun_tokenize_labels(rec):
         if labels[i]!=tokenized_:
             labels[i] = -100
         else:
-            labels[i] = -100
             break
     
+    #### is maskiung the end tokens a good idea?? No I dont think so.
+    #### we want the output to be as clean as possible
+    #### let us kind of keep only one token.
     tokenized_ = tokenizer(
         END_KEY
     )['input_ids'][0]
 
     for i in range(len(labels)-1, 0, -1):
-        if labels[i]==tokenized_:
-            labels[i] = -100
-        else:
+        if labels[i-1]!=tokenized_:
             break
-    
+        elif labels[i]==tokenized_:
+            labels[i] = -100
+        
     rec['labels'] = labels
     
     return rec
@@ -158,7 +162,7 @@ for ep in range(EPOCH):
         
         count += 1
         
-        if count % step_at == 0 or loss < 0.8:
+        if count % step_at == 0:
             torch.save(model.state_dict(), "/home/sarabjot/PathFactory/GPT-j/saved_hf_model/saved_model.pth")
             print("*"*100, flush=True)
             print(tokenizer.decode(torch.argmax(out_, dim=1)))

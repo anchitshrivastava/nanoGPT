@@ -28,19 +28,22 @@ def creating_masking_labels_inputs(rec, tokenizer):
         if labels[i]!=tokenized_:
             labels[i] = -100
         else:
-            labels[i] = -100
             break
     
+    #### is maskiung the end tokens a good idea?? No I dont think so.
+    #### we want the output to be as clean as possible
+    #### let us kind of keep only one token.
     tokenized_ = tokenizer(
         END_KEY
     )['input_ids'][0]
 
     for i in range(len(labels)-1, 0, -1):
-        if labels[i]==tokenized_:
-            labels[i] = -100
-        else:
+        if labels[i-1]!=tokenized_:
             break
-    
+        elif labels[i]==tokenized_:
+            labels[i] = -100
+        
     rec['labels'] = labels
     
     return rec
+    

@@ -4,7 +4,7 @@ LR = 3e-4
 EPOCH = 300
 # DEVICE = 'cuda:1' if torch.cuda.is_available() else 'cpu'
 DEVICE = 'cpu'
-BATCH_SIZE=4
+BATCH_SIZE=6
 MAX_TOKENIZE_LEN=1024
 
 END_KEY = "### End"
