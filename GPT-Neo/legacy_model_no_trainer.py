@@ -33,8 +33,7 @@ model = AutoModelForCausalLM.from_pretrained(
 
 tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-neo-2.7B")
 tokenizer.bos_token = START_TOKEN
-tokenizer.pad_token = END_KEY
-tokenizer.eos_token = END_KEY
+tokenizer.pad_token = tokenizer.eos_token
 tokenizer.add_special_tokens({"additional_special_tokens": [END_KEY, INSTRUCTION_KEY, RESPONSE_KEY_NL, INPUT_KEY]})
 
 model.to(DEVICE)
