@@ -4,6 +4,8 @@ from functools import partial
 from pathlib import Path
 from typing import Any, Dict, List, Tuple, Union
 
+import click
+
 import numpy as np
 from datasets import Dataset, load_dataset
 
@@ -32,22 +34,10 @@ from config import (
 
 DEVICE = "cuda"
 latest_checkpoint = "EleutherAI/gpt-neo-125m"
-model_dir = "/home/sarabjot/storage/backup2/pathfactory_models/trainer_mpt_saved_290423"
+model_dir = "/home/sarabjot/pathfactory/nanoGPT/GPT-MPT/trainer_mpt_saved_290423"
 DATASET = "databricks/databricks-dolly-15k"
 EPOCH=1
-    
-# parser = argparse.ArgumentParser(description='My training script.')
-# parser.add_argument('--local_rank', type=int, default=-1,
-#                     help='local rank passed from distributed launcher')
-# parser.add_argument('--lr', type=float, default=1e-5,
-#                     help='lr passed from distributed launcher')
-
-# Include DeepSpeed configuration arguments
-# parser = deepspeed.add_config_arguments(parser)
-# cmd_args = parser.parse_args()
-
-# print(cmd_args)
-    
+        
 class DataCollatorForCompletionOnlyLM(DataCollatorForLanguageModeling):
     def torch_call(self, examples: List[Union[List[int], Any, Dict[str, Any]]]) -> Dict[str, Any]:
         batch = super().torch_call(examples)
@@ -135,7 +125,7 @@ def load_model(
 
     model = AutoModelForCausalLM.from_pretrained(
         pretrained_model_name_or_path,
-    cache_dir = "/home/sarabjot/storage/backup2/pathfactory_models",
+    # cache_dir = "/home/sarabjot/storage/backup2/pathfactory_models",
     # gradient_checkpointing=True,
     # trust_remote_code=True,
     config = config
@@ -223,37 +213,53 @@ print("*"*100)
 print(model.config.hidden_size)
 print("*"*100)
 
-training_args = TrainingArguments(
-    output_dir=model_dir,
-    per_device_train_batch_size=1,
-    # per_device_eval_batch_size=2,
-    # fp16=False,
-    # learning_rate=cmd_args.lr,
-    learning_rate=1e-5,
-    num_train_epochs=1,
-    # logging_dir=f"{model_dir}/runs",
-    # logging_strategy="steps",
-    # logging_steps=100,
-    evaluation_strategy="steps",
-    eval_steps=100,
-    save_strategy="steps",
-    save_steps=10_000,
-    load_best_model_at_end=False,
-    # report_to="tensorboard",
-    # disable_tqdm=True,
-    remove_unused_columns=False,
-    # local_rank=cmd_args.local_rank,
-    # warmup_steps=500,
-    # deepspeed="/home/sarabjot/PathFactory/GPT-j/GPT-MPT/deepspeedconfig.json"
+def train(lr, local_rank, deepspeed):
+    training_args = TrainingArguments(
+        output_dir=model_dir,
+        per_device_train_batch_size=1,
+        per_device_eval_batch_size=2,
+        # fp16=False,
+        learning_rate=lr,
+        num_train_epochs=1,
+        # logging_dir=f"{model_dir}/runs",
+        # logging_strategy="steps",
+        # logging_steps=100,
+        evaluation_strategy="steps",
+        eval_steps=100,
+        save_strategy="steps",
+        save_steps=10_000,
+        load_best_model_at_end=False,
+        # report_to="tensorboard",
+        # disable_tqdm=True,
+        remove_unused_columns=False,
+        local_rank=local_rank,
+        warmup_steps=500,
+        deepspeed=deepspeed
+        )
+
+    trainer = Trainer(
+        model=model,
+        tokenizer=tokenizer,
+        args=training_args,
+        train_dataset=split_dataset["train"],
+        eval_dataset=split_dataset["test"],
+        data_collator=data_collator,
     )
 
-trainer = Trainer(
-    model=model,
-    tokenizer=tokenizer,
-    args=training_args,
-    train_dataset=split_dataset["train"],
-    eval_dataset=split_dataset["test"],
-    data_collator=data_collator,
-)
+    trainer.train()
 
-trainer.train()
+
+@click.command()
+@click.option("--lr", type=float, default=1e-5, help="Learning rate to use for training.")
+@click.option("--deepspeed", type=str, default=None, help="Path to deepspeed config file.")
+@click.option(
+    "--local_rank",
+    type=str,
+    default=True,
+    help="Provided by deepspeed to identify which instance this process is when performing multi-GPU training.",
+)
+def main(**kwargs):
+    train(**kwargs)
+    
+if __name__ == "__main__":
+    main()

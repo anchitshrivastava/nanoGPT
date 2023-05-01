@@ -1,15 +1,5 @@
 import torch
 
-from transformers import AutoConfig
-
-
-MODEL_NAME = "EleutherAI/gpt-neo-2.7B"
-LR = 3e-4
-EPOCH = 300
-# DEVICE = 'cuda:1' if torch.cuda.is_available() else 'cpu'
-DEVICE = 'cpu'
-BATCH_SIZE=4
-MAX_TOKENIZE_LEN=1024
 
 END_KEY = "### End"
 INSTRUCTION_KEY = "### Instruction:"
@@ -25,5 +15,66 @@ PROMPT_FORMAT = """Below is an instruction that describes a task. Write a respon
 ### Response:
 """
 
-model_config = AutoConfig.from_pretrained(MODEL_NAME)
-model_config.max_position_embeddings = 2048
+INTRO_BLURB = (
+    "Below is an instruction that describes a task. Write a response that appropriately completes the request."
+)
+
+
+RESPONSE_KEY = "### Response:"
+
+
+PROMPT_NO_INPUT_FORMAT = """{intro}
+
+{instruction_key}
+{instruction}
+
+{response_key}
+{response}
+
+{end_key}""".format(
+    intro=INTRO_BLURB,
+    instruction_key=INSTRUCTION_KEY,
+    instruction="{instruction}",
+    response_key=RESPONSE_KEY,
+    response="{response}",
+    end_key=END_KEY,
+)
+
+# This is a training prompt that contains an input string that serves as context for the instruction.  For example,
+# the input might be a passage from Wikipedia and the intruction is to extract some information from it.
+PROMPT_WITH_INPUT_FORMAT = """{intro}
+
+{instruction_key}
+{instruction}
+
+{input_key}
+{input}
+
+{response_key}
+{response}
+
+{end_key}""".format(
+    intro=INTRO_BLURB,
+    instruction_key=INSTRUCTION_KEY,
+    instruction="{instruction}",
+    input_key=INPUT_KEY,
+    input="{input}",
+    response_key=RESPONSE_KEY,
+    response="{response}",
+    end_key=END_KEY,
+)
+
+# This is the prompt that is used for generating responses using an already trained model.  It ends with the response
+# key, where the job of the model is to provide the completion that follows it (i.e. the response itself).
+PROMPT_FOR_GENERATION_FORMAT = """{intro}
+
+{instruction_key}
+{instruction}
+
+{response_key}
+""".format(
+    intro=INTRO_BLURB,
+    instruction_key=INSTRUCTION_KEY,
+    instruction="{instruction}",
+    response_key=RESPONSE_KEY,
+)
