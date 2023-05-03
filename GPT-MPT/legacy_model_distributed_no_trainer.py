@@ -33,10 +33,11 @@ from config import (
 )
 
 DEVICE = "cuda"
-latest_checkpoint = "EleutherAI/gpt-neo-125m"
-model_dir = "/home/sarabjot/pathfactory/nanoGPT/GPT-MPT/trainer_mpt_saved_290423"
+latest_checkpoint = "EleutherAI/gpt-neo-2.7B"
+# model_dir = "/home/sarabjot/pathfactory/nanoGPT/GPT-MPT/trainer_mpt_saved_290423" # "EleutherAI/gpt-neo-125m"
+model_dir = "/home/sarabjot/pathfactory/nanoGPT/GPT-MPT/trainer_saved_030523" # "EleutherAI/gpt-neo-2.7B"
 DATASET = "databricks/databricks-dolly-15k"
-EPOCH=1
+EPOCH=3
         
 class DataCollatorForCompletionOnlyLM(DataCollatorForLanguageModeling):
     def torch_call(self, examples: List[Union[List[int], Any, Dict[str, Any]]]) -> Dict[str, Any]:
@@ -220,12 +221,12 @@ def train(lr, local_rank, deepspeed):
         per_device_eval_batch_size=2,
         # fp16=False,
         learning_rate=lr,
-        num_train_epochs=1,
+        num_train_epochs=50,
         # logging_dir=f"{model_dir}/runs",
         # logging_strategy="steps",
         # logging_steps=100,
         evaluation_strategy="steps",
-        eval_steps=100,
+        eval_steps=10_000,
         save_strategy="steps",
         save_steps=10_000,
         load_best_model_at_end=False,
