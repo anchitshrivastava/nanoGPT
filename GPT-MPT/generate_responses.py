@@ -234,7 +234,7 @@ def generate_response(
 
 
 
-model, tokenizer = load_model_tokenizer_for_generate("/home/sarabjot/pathfactory/nanoGPT/GPT-MPT/trainer_mpt_saved_290423/checkpoint-200000")
+model, tokenizer = load_model_tokenizer_for_generate("/home/sarabjot/pathfactory/nanoGPT/GPT-MPT/trainer_mpt_saved_290423/checkpoint-270000")
 
 instructions = [
     "Write a love letter to Edgar Allan Poe.",

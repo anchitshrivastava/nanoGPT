@@ -163,3 +163,5 @@ cython_debug/
 
 .history/
 saved_hf_model/
+
+*/trainer_*_saved_*/
